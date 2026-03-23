@@ -40,6 +40,11 @@ The `utils/` folder has optional Python helpers for training data: `slice_my_rec
 
 ## Changelog
 
+### 20260323
+- More data and better negatives
+- 1 species
+    - **Passer domesticus** - House Sparrow
+
 ### 20260321
 - Starting with 1 species
 - Added 1 new augmented species:
