@@ -34,6 +34,10 @@ These species have enhanced detection capabilities compared to the base BirdNET 
      - Restart BirdNET-Go
 5. Refer to the [BirdNET-Go documentation](https://github.com/tphakala/birdnet-go) for detailed setup instructions
 
+## Utility scripts
+
+The `utils/` folder has optional Python helpers for training data: `slice_my_recordings.py` (slice audio into clips) and `xeno_canto_download.py` (download from Xeno-Canto). You do not need them to install or run the classifier models from releases but they are helpful for gathering data.
+
 ## Changelog
 
 ### 20260321
