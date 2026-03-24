@@ -1,4 +1,4 @@
-# BirdNET-Go Classifiers
+# BirdNET-Go Classifiers for Nagpur
 
 Custom TensorFlow Lite format AI model classifiers for enhanced bird and wildlife identification, designed for use with [BirdNET-Go](https://github.com/tphakala/birdnet-go) and BirdNET Analyzer.
 
@@ -36,7 +36,10 @@ These species have enhanced detection capabilities compared to the base BirdNET 
 
 ## Utility scripts
 
-The `utils/` folder has optional Python helpers for training data: `slice_my_recordings.py` (slice audio into clips) and `xeno_canto_download.py` (download from Xeno-Canto). You do not need them to install or run the classifier models from releases but they are helpful for gathering data.
+The `utils/` folder contains optional helpers for dataset preparation.
+- `slice_my_recordings.py`: slices local recordings into 3-second training clips.
+- `xeno_canto_download.py`: downloads species recordings from Xeno-Canto (with optional slicing).
+- `copy_false_positives.py`: copies reviewed false-positive clips from BirdNET-Go data into `raw_pool/false-positive`.
 
 ## Changelog
 
