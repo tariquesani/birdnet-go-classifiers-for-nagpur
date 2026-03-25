@@ -10,6 +10,13 @@ Usage:
     pip install requests tqdm
     pip install pydub   # only needed if using --slice
 
+API key setup (Xeno-canto API v3):
+    Create `utils/.env` next to this script and add:
+        XENO_CANTO_API_KEY=YOUR_KEY
+    The downloader will read `XENO_CANTO_API_KEY` from the environment first,
+    then fall back to `utils/.env`. If still missing, it uses `key=demo`
+    (limited access/testing).
+
     # Download raw recordings for a species:
     python xeno_canto_download.py --species "Passer domesticus"
 
@@ -66,57 +73,145 @@ except ImportError:
 # ── Defaults ──────────────────────────────────────────────────────────────────
 DEFAULT_MAX_RECORDINGS  = 150
 DEFAULT_QUALITY         = "A,B"
-DEFAULT_OUTPUT_DIR      = Path("downloads")
+DEFAULT_OUTPUT_DIR      = Path("training_data")
 DEFAULT_CLIPS_PER_FILE  = 5
 DEFAULT_CLIP_DURATION_S = 3
 DELAY_BETWEEN_REQUESTS  = 1.0   # seconds — be polite to the Xeno-canto API
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 120
+DEFAULT_API_MAX_RETRIES = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 2.0
+DEFAULT_USER_AGENT = "birdnet-go-classifiers-downloader/1.0"
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 # ── Xeno-canto API ────────────────────────────────────────────────────────────
 
-def fetch_recordings(species: str, quality_grades: list, country: str = "") -> list:
-    """Query Xeno-canto API v2 and return all matching recording metadata."""
-    query = f'"{species}"'
-    for grade in quality_grades:
-        query += f' q:{grade}'
-    if country:
-        query += f' cnt:"{country}"'
+def load_env_var_from_local_dotenv(var_name: str) -> str:
+    """
+    Read an env var from process env first, then from a .env file
+    in the same folder as this script.
+    """
+    value = os.getenv(var_name, "").strip()
+    if value:
+        return value
 
-    recordings = []
-    page = 1
+    dotenv_path = Path(__file__).resolve().parent / ".env"
+    if not dotenv_path.exists():
+        return ""
+
+    try:
+        for raw_line in dotenv_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, val = line.split("=", 1)
+            if key.strip() == var_name:
+                return val.strip().strip('"').strip("'")
+    except Exception:
+        return ""
+
+    return ""
+
+
+def fetch_recordings(species: str, quality_grades: list, api_key: str, country: str = "") -> list:
+    """
+    Query Xeno-canto API v3 and return all matching recording metadata.
+
+    Important: multiple quality grades are treated as OR.
+    (We query once per grade and then merge/deduplicate recordings.)
+    """
+
+    def fetch_for_single_quality(grade: str) -> list:
+        # Keep query ordering aligned with known-good examples:
+        # sp:"..." + cnt:"..." + q:A
+        query = f'sp:"{species}"'
+        if country:
+            query += f' cnt:"{country}"'
+        query += f' q:{grade}'
+
+        recordings = []
+        page = 1
+
+        while True:
+            params = {"query": query, "page": page, "key": api_key}
+            attempts = 0
+            while True:
+                try:
+                    resp = requests.get(
+                        "https://xeno-canto.org/api/3/recordings",
+                        params=params,
+                        timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                        headers={"User-Agent": DEFAULT_USER_AGENT},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except requests.Timeout as e:
+                    attempts += 1
+                    if attempts >= DEFAULT_API_MAX_RETRIES:
+                        print(f"  ⚠  Timeout after {attempts} tries (grade {grade}, page {page}). {e}")
+                        return recordings
+                    sleep_s = DEFAULT_RETRY_BACKOFF_SECONDS * attempts
+                    print(f"  ⚠  Timeout (grade {grade}, page {page}). Retrying in {sleep_s:.1f}s …")
+                    time.sleep(sleep_s)
+                except requests.RequestException as e:
+                    status_code = getattr(getattr(e, "response", None), "status_code", None)
+                    retryable = status_code in (429, 500, 502, 503, 504)
+                    if retryable and attempts + 1 < DEFAULT_API_MAX_RETRIES:
+                        attempts += 1
+                        sleep_s = DEFAULT_RETRY_BACKOFF_SECONDS * attempts
+                        print(
+                            f"  ⚠  HTTP {status_code} (grade {grade}, page {page}). "
+                            f"Retrying in {sleep_s:.1f}s …"
+                        )
+                        time.sleep(sleep_s)
+                        continue
+
+                    if status_code in (401, 403):
+                        print(
+                            f"  ⚠  API auth failed (HTTP {status_code}). "
+                            "Check XENO_CANTO_API_KEY in utils/.env."
+                        )
+                    elif status_code == 404:
+                        print("  ⚠  API endpoint not found (404).")
+
+                    print(f"  ⚠  API request failed (grade {grade}, page {page}): {e}")
+                    return recordings
+
+            num_pages = int(data.get("numPages", 1))
+            recs = data.get("recordings", [])
+            recordings.extend(recs)
+            print(f"    Grade {grade} — Page {page}/{num_pages} — {len(recs)} recordings")
+
+            if page >= num_pages:
+                break
+            page += 1
+            time.sleep(DELAY_BETWEEN_REQUESTS)
+
+        return recordings
+
+    merged = []
+    seen_keys = set()
 
     print(f"\n🔍  Querying Xeno-canto for: {species}")
     if country:
         print(f"    Country filter : {country}")
-    print(f"    Quality filter : {', '.join(quality_grades)}")
+    print(f"    Quality filter : {', '.join(quality_grades)} (OR)")
 
-    while True:
-        url = (
-            f"https://xeno-canto.org/api/2/recordings"
-            f"?query={requests.utils.quote(query)}&page={page}"
-        )
-        try:
-            resp = requests.get(url, timeout=30)
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            print(f"  ⚠  API request failed (page {page}): {e}")
-            break
+    for grade in quality_grades:
+        recs = fetch_for_single_quality(grade)
+        for rec in recs:
+            key = rec.get("id") or rec.get("file")
+            if key is None:
+                merged.append(rec)
+                continue
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            merged.append(rec)
 
-        data      = resp.json()
-        num_pages = int(data.get("numPages", 1))
-        recs      = data.get("recordings", [])
-        recordings.extend(recs)
-
-        print(f"    Page {page}/{num_pages} — {len(recs)} recordings")
-
-        if page >= num_pages:
-            break
-        page += 1
-        time.sleep(DELAY_BETWEEN_REQUESTS)
-
-    print(f"✅  Total found : {len(recordings)}")
-    return recordings
+    print(f"✅  Total found : {len(merged)}")
+    return merged
 
 
 def select_recordings(recordings: list, max_count: int) -> list:
@@ -150,7 +245,12 @@ def download_recording(rec: dict, dest_dir: Path) -> Path | None:
         return dest   # already downloaded
 
     try:
-        r = requests.get(file_url, stream=True, timeout=60)
+        r = requests.get(
+            file_url,
+            stream=True,
+            timeout=DEFAULT_REQUEST_TIMEOUT_SECONDS,
+            headers={"User-Agent": DEFAULT_USER_AGENT},
+        )
         r.raise_for_status()
         with open(dest, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
@@ -269,6 +369,7 @@ def main():
     output_base    = Path(args.output)
     species_dir    = output_base / args.species      # e.g. downloads/Passer domesticus/
     clips_dir      = species_dir / "clips"
+    api_key        = load_env_var_from_local_dotenv("XENO_CANTO_API_KEY") or "demo"
 
     display_name = f"{args.species}" + (f" ({args.common})" if args.common else "")
 
@@ -282,6 +383,10 @@ def main():
         print(f"🌍  Country     : {args.country}")
     print(f"⭐  Quality     : {', '.join(quality_grades)}")
     print(f"🔢  Max recs    : {args.max}")
+    if api_key == "demo":
+        print("🔐  API key     : demo (set XENO_CANTO_API_KEY in utils/.env for full access)")
+    else:
+        print("🔐  API key     : loaded from env/.env")
     if args.no_download:
         print(f"⏭️   Downloading : SKIPPED")
     print(f"{'─'*55}")
@@ -298,7 +403,7 @@ def main():
     downloaded_paths = []
 
     if not args.no_download:
-        recordings = fetch_recordings(args.species, quality_grades, args.country)
+        recordings = fetch_recordings(args.species, quality_grades, api_key, args.country)
         selected   = select_recordings(recordings, args.max)
 
         print(f"\n⬇️   Downloading recordings …\n")
