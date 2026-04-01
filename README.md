@@ -33,6 +33,7 @@ These species have enhanced detection capabilities compared to the base BirdNET 
      - Set labelpath to "models/BirdNET-Go_classifier_20250916_Labels.txt"
      - Restart BirdNET-Go
 5. Refer to the [BirdNET-Go documentation](https://github.com/tphakala/birdnet-go) for detailed setup instructions
+6. To train your own model, follow the BirdNET-Go wiki guide: [Training a Custom Classifier](https://github.com/tphakala/birdnet-go/wiki/Training-a-Custom-Classifier)
 
 ## Utility scripts
 
