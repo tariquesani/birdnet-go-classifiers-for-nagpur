@@ -1,0 +1,16 @@
+# Python dependencies for scripts in utils/
+#
+# Install: pip install -r requirements.txt
+#
+# pydub uses ffmpeg for decoding/encoding — install separately:
+#   Windows: https://ffmpeg.org/download.html (or e.g. winget install ffmpeg)
+#   Linux:   apt install ffmpeg
+#   macOS:   brew install ffmpeg
+#
+# Optional (better playback for slice_my_recordings.py --review):
+#   pip install simpleaudio
+
+prompt_toolkit>=3.0.0
+requests>=2.28.0
+tqdm>=4.65.0
+pydub>=0.25.1
